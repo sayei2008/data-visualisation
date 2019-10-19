@@ -1,0 +1,373 @@
+---
+title: "Data Visualisation Assignment 4"
+author: "Sai Krishna Lakshminarayanan"
+date: "14 March 2019"
+output:
+  word_document: default
+  html_document: default
+---
+
+##Introduction
+
+```{r cars}
+library(tm)
+library(SnowballC)
+library(wordcloud)
+library(RColorBrewer)
+library(dplyr)
+library(ggplot2)
+library(ggdendro)
+library(cluster)
+library(HSAUR)
+library(fpc)
+library(skmeans)
+library(plyr)
+```
+
+```{r}
+corpus1 <- VCorpus(DirSource("corpus", encoding = "UTF-8"), readerControl = list(language = "eng"))
+
+```
+
+```{r}
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+corpus1 <- tm_map(corpus1, toSpace, "/")
+corpus1 <- tm_map(corpus1, toSpace, "/.")
+corpus1 <- tm_map(corpus1, toSpace, "@")
+corpus1 <- tm_map(corpus1, toSpace, "\\|")
+```
+
+```{r}
+corpus1 <- tm_map(corpus1, content_transformer(tolower))
+corpus1 <- tm_map(corpus1, removeWords, stopwords("english"))
+corpus1 <- tm_map(corpus1, removePunctuation)
+corpus1 <- tm_map(corpus1, removeNumbers)
+
+```
+
+```{r}
+corpus1 <- tm_map(corpus1, removeWords, c(letters)) 
+corpus1 <- tm_map(corpus1, stripWhitespace)
+```
+
+```{r}
+corpus1 <- tm_map(corpus1, stemDocument)
+```
+
+```{r}
+corpus1<-tm_map(corpus1,removeWords, c('subject','will','use','can','organ','line','one','say','now','like','get','know','just','think','also','make','may','see','want','nntppostinghost',"from", "to","organization", "nntp-posting-host", "article-i.d", "keywords", "originator", "re","reply-to", "last-modified", "distribution","one","write"))
+
+```
+
+```{r}
+corpus1.tdm <- TermDocumentMatrix(corpus1)
+```
+
+```{r}
+# remove terms appearing in very few documents
+corpus1.tdm <- removeSparseTerms(corpus1.tdm, 0.9996)
+```
+
+```{r}
+corpus1.tdm.matrix <- corpus1.tdm %>% as.matrix()
+
+v <- sort(rowSums(corpus1.tdm.matrix),decreasing=TRUE)
+d <- data.frame(word = names(v),freq=v)
+head(d, 5)
+```
+
+
+```{r}
+corpus1.dtm <- DocumentTermMatrix(corpus1, control = list(weighting = function(x) weightTfIdf(x, normalize = TRUE)))
+sparsity_threshold = 0.9995
+corpus1.dtm<-removeSparseTerms(corpus1.dtm, sparsity_threshold)
+corpus1.dtm.mat <- corpus1.dtm %>% as.matrix()
+
+# remove any zero rows
+corpus1.dtm.mat <- corpus1.dtm.mat[rowSums(corpus1.dtm.mat^2) !=0,]
+```
+
+```{r}
+percent = 20
+sample_size = nrow(corpus1.dtm.mat) * percent/100
+
+corpus1.dtm.mat.sample <- corpus1.dtm.mat[sample(1:nrow(corpus1.dtm.mat), sample_size, replace=FALSE),]
+```
+
+
+```{r}
+k=8
+corpus1.dtm.mat.sample.skm  <- skmeans(corpus1.dtm.mat.sample,k, method='pclust')
+
+head(corpus1.dtm.mat.sample.skm$cluster)
+```
+
+```{r}
+corpus1.dtm.mat.sample.skm <- as.data.frame(corpus1.dtm.mat.sample.skm$cluster)
+colnames(corpus1.dtm.mat.sample.skm) = c("cluster")
+corpus1.dtm.mat.sample.skm$docs <- rownames(corpus1.dtm.mat.sample.skm)
+corpus1.dtm.mat.sample.skm$docs<-lapply(corpus1.dtm.mat.sample.skm$docs, tm::removeNumbers)
+#corpus1.dtm.mat.sample.skm$docs<-lapply(corpus1.dtm.mat.sample.skm$docs, function(x) gsub("doc", "", x))
+corpus1.dtm.mat.sample.skm$docs <- unlist(corpus1.dtm.mat.sample.skm$docs)
+#corpus1.dtm.mat.sample.skm$docs<-lapply(corpus1.dtm.mat.sample.skm$docs, tm::removeNumbers)
+head(corpus1.dtm.mat.sample.skm$docs)
+```
+
+
+
+```{r}
+corpus1.dtm.mat.sample.skm.table <-table(corpus1.dtm.mat.sample.skm$cluster, corpus1.dtm.mat.sample.skm$docs)
+corpus1.dtm.mat.sample.skm.table
+```
+
+```{r}
+# make a data frame table from it - suitable for plotting
+corpus1.dtm.mat.sample.skm.table <-as.data.frame.table(corpus1.dtm.mat.sample.skm.table)
+
+# plot stacked bar graph to show cluster compositions
+g<- ggplot(corpus1.dtm.mat.sample.skm.table, aes(x=Var1, y=Freq,fill=Var2))
+g<- g + geom_bar(width = 0.5, stat="identity") +
+  scale_fill_brewer(palette = "Set2", name = "Document Classes") +
+  xlab("Cluster IDs") +
+  ylab("Frequency") + 
+  ggtitle("Cluster compositions") +
+  theme(panel.grid.major = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black", size = 0.25),  axis.text.x = element_text(angle = 30, hjust=1, vjust = .5), legend.key = element_rect(fill = NA, colour = NA, size = 0.25)) 
+
+g
+```
+
+
+
+
+
+```{r}
+# select only the documents from the  random sample taken earlier
+corpus1.tdm.sample <- corpus1.tdm[, rownames(corpus1.dtm.mat.sample)]
+
+# convert to r matrix
+corpus1.tdm.sample.mat <- corpus1.tdm.sample %>% as.matrix()
+
+# number of clusters
+m<- length(unique(corpus1.dtm.mat.sample.skm$cluster))
+
+
+
+```
+
+```{r}
+set.seed(2474)
+par(mfrow=c(1,1))
+
+# for each cluster plot an explanatory word cloud
+for (i in 1:m) {
+  #the documents in  cluster i
+  cluster_doc_ids <-which(corpus1.dtm.mat.sample.skm$cluster==i)
+
+  #the subset of the matrix with these documents
+  corpus1.tdm.sample.mat.cluster<- corpus1.tdm.sample.mat[, cluster_doc_ids]
+
+  # sort the terms by frequency for the documents in this cluster
+  v <- sort(rowSums(corpus1.tdm.sample.mat.cluster),decreasing=TRUE)
+  d <- data.frame(word = names(v),freq=v)
+  # call word cloud function
+  wordcloud(words = d$word, freq = d$freq, scale=c(4,.5), min.freq = 30,
+          max.words=50, random.order=FALSE, rot.per=0.3, 
+          colors=c('#f2f0f7','#cbc9e2','#9e9ac8','#756bb1','#54278f'))
+ title(paste("cluster", i))
+}
+```
+
+
+```{r}
+# philentropy library provides a number of distance/similarity measures 
+# including cosine which we use for group documents
+library(philentropy)
+
+# from philentropy library. Slower than dist function, but handles cosine similarity
+sim_matrix<-distance(corpus1.dtm.mat.sample, method = "cosine")
+
+```
+
+```{r}
+# for readiblity (and debugging) put the doc names on the cols and rows
+colnames(sim_matrix) <- rownames(corpus1.dtm.mat.sample)
+rownames(sim_matrix) <- rownames(corpus1.dtm.mat.sample)
+
+# cosine is really a similarity measure (inverse of distance measure)
+# we need to create a distance measure for hierarchical clustering
+max_sim <- max(sim_matrix)
+
+dist_matrix <- as.dist(max_sim-sim_matrix)
+ 
+# hierarchical clustering
+corpus1.dtm.sample.dend <- hclust(dist_matrix, method = "ward.D")
+```
+
+```{r}
+set.seed(2584)
+#par(mfrow=c(2,1))
+plot(corpus1.dtm.sample.dend, hang= -1, labels = FALSE,  main = "Cluster dendrogram", sub = NULL, xlab = NULL, ylab = "Height")
+
+# here rect.hclust creates  rectangles around the dendogram for k number of clusters
+rect.hclust(corpus1.dtm.sample.dend, k = 8, border = "red")
+
+```
+
+```{r}
+library(gplots)
+library(stats)
+
+# define the cut to make
+# you can specify the height at which to cut using argeument h
+# or the number of clusters using k
+#cut <- max(corpus.dtm.sample.dend$height)/2.1
+
+# number of clusters we wish to examine
+k=8
+
+# call the cutree function
+# cutree returns a vector of cluster membership
+# in the order of the original data rows
+corpus1.dtm.sample.dend.cut <- cutree(corpus1.dtm.sample.dend, k=k)
+
+#number of clusters at the cut
+m <- length(unique(corpus1.dtm.sample.dend.cut))
+
+# create a data frame from the cut 
+corpus1.dtm.sample.dend.cut <- as.data.frame(corpus1.dtm.sample.dend.cut)
+
+#add a meaningful column namane
+colnames(corpus1.dtm.sample.dend.cut) = c("cluster")
+
+# add the doc names as an explicit column
+corpus1.dtm.sample.dend.cut$docs <- rownames(corpus1.dtm.sample.dend.cut)
+
+# for the journal datasets each document has a name like 'a1', 'b1 etc
+# As before, I remove the number and full stop so that the docs column
+# only contains the class name ('a', 'b', etc)
+
+corpus1.dtm.sample.dend.cut$docs<-lapply(corpus1.dtm.sample.dend.cut$docs, tm::removeNumbers)
+#corpus.dtm.sample.dend.cut$docs<-lapply(corpus.dtm.sample.dend.cut$docs, tm::removePunctuation)
+
+# I unlist the list assigned by rownames to $docs
+corpus1.dtm.sample.dend.cut$docs <- unlist(corpus1.dtm.sample.dend.cut$docs)
+```
+
+```{r}
+# create a frequency table
+corpus1.dtm.sample.dend.cut.table <-table(corpus1.dtm.sample.dend.cut$cluster, corpus1.dtm.sample.dend.cut$docs)
+
+#displays the confusion matrix
+corpus1.dtm.sample.dend.cut.table
+```
+
+```{r}
+# make a data frame table from it - suitable for plotting
+corpus1.dtm.sample.dend.cut.table <-as.data.frame.table(corpus1.dtm.sample.dend.cut.table)
+
+# plot stacked bar graph to show cluster compositions
+g<- ggplot(corpus1.dtm.sample.dend.cut.table, aes(x=Var1, y=Freq,fill=Var2))
+g<- g + geom_bar(width = 0.5, stat="identity") +
+  scale_fill_brewer(palette = "Set1", name = "Document Classes") +
+  xlab("Cluster IDs") +
+  ylab("Frequency") + 
+  ggtitle("Cluster compositions") +
+  theme(panel.grid.major = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black", size = 0.25),  axis.text.x = element_text(angle = 30, hjust=1, vjust = .5), legend.key = element_rect(fill = NA, colour = NA, size = 0.25)) 
+
+g
+```
+
+```{r}
+#number of clusters at the cut
+m <- length(unique(corpus1.dtm.sample.dend.cut$cluster))
+
+
+set.seed(1478)
+par(mfrow=c(1,1))
+
+# for each cluster plot an explanatory word cloud
+for (i in 1:m) {
+  #the documents in  cluster i
+  cut_doc_ids <-which(corpus1.dtm.sample.dend.cut$cluster==i)
+
+  #the subset of the matrix with these documents
+  corpus1.tdm.sample.mat.cluster<- corpus1.tdm.sample.mat[, cut_doc_ids]
+
+  # sort the terms by frequency for the documents in this cluster
+  v <- sort(rowSums(corpus1.tdm.sample.mat.cluster),decreasing=TRUE)
+  d <- data.frame(word = names(v),freq=v)
+  # call word cloud function
+  wordcloud(words = d$word, freq = d$freq, scale=c(3,.2), min.freq = 1000,
+          max.words=30, random.order=FALSE, rot.per=0.35, 
+          colors=c('#feedde','#fdbe85','#fd8d3c','#e6550d','#a63603'))
+ title(paste("num clusters  = ", k, "; cluster", i))
+}
+```
+
+```{r}
+library(treemapify)
+
+#number of clusters at the cut
+m <- length(unique(corpus1.dtm.sample.dend.cut$cluster))
+
+# number of terms per cluster to show
+n <-10
+
+#intialise an empty data frame
+#fields initiliased with empty vectors
+df <- data.frame(word=character(), freq = double(),cluster = integer())
+# for each cluster plot an explanatory word cloud
+for (i in 1:m) {
+  #the documents in  cluster i
+  cut_doc_ids <-which(corpus1.dtm.sample.dend.cut$cluster==i)
+  
+  #the subset of the matrix with these documents
+  corpus1.tdm.sample.mat.cluster<- corpus1.tdm.sample.mat[, cut_doc_ids]
+
+  # sort the terms by frequency for the documents in this cluster
+  v <- sort(rowSums(corpus1.tdm.sample.mat.cluster),decreasing=TRUE)
+  d <- data.frame(word = names(v),freq=v, cluster=i)
+  
+  # we might want scale so that high frequencies in large cluster don't predominate
+  d[,2] <- scale(d[,2],center=FALSE, scale=TRUE)
+  
+  # take first n values only
+  d <-d[1:n,]
+  
+  #bind the data for this cluster to the df data frame created earlier
+  df<- rbind(df,d)
+}
+# the geom_treemap seems to only like vectors of values
+df$freq <- as.vector(df$freq)
+
+# simple function to rename the values in the cluster column as "cluster 1, cluster 2, etc"
+clust_name<-function(x){
+   paste("cluster", x)
+}
+
+# apply the function to the 'cluster' column
+ df$cluster<- as.character(apply(df["cluster"], MARGIN = 2,FUN =clust_name ))
+  
+ 
+gg<- ggplot(df, aes(area = freq, fill = freq, subgroup=cluster, label = word)) +
+geom_treemap() +
+geom_treemap_subgroup_border() +
+geom_treemap_subgroup_text(place = "centre", grow = T, alpha = 0.5, colour ="#99d8c9", fontface = "italic", min.size = 10) +
+geom_treemap_text(fontface = "italic", colour = "white", place = "centre", grow = TRUE)
+  
+gg
+```
+
+```{r}
+gg<- ggplot(df, aes(area = freq, fill = freq, subgroup=cluster, label = word)) +
+geom_treemap() +
+  geom_treemap_text(grow = T, reflow = T, colour = "black") +
+  facet_wrap( ~ cluster) +
+
+  scale_fill_gradientn(colours = terrain.colors(n, alpha = 0.8)) +
+  theme(legend.position = "bottom") +
+  labs(title = "The Most Frequent Terms in each cluster ", caption = "The area of each term is proportional to its relative frequency within cluster")
+
+gg
+```
+
